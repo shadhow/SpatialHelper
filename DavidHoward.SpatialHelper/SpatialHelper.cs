@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 
 using System.Data;
@@ -14,24 +15,28 @@ using NetTopologySuite.IO;
 namespace DavidHoward.SpatialHelper
 {
     /// <summary>
-    /// Imports SQLServer spatial data from query into a DotSpatial featureset
+    /// Collection of spatial utilities compiled from various sources
     /// </summary>
-    /// <remarks>
-    /// Code from FObermeier in http://dotspatial.codeplex.com/discussions/250928
-    /// Requires DotSpatial.Data in calling module to return IFeatureSet type
-    /// Usage example:  var fsPolygon = (FeatureSet)SqlServerToFeatureSet.LoadFeatureSet(ConnectionString, query);
-    /// </remarks>
-    /// 
-    public class SqlServerToFeatureSet
+    public class SpatialHelper
     {
         //http://dotspatial.codeplex.com/discussions/250928
 
-        static SqlServerToFeatureSet()
+        //========================================================
+        static SpatialHelper()
         {
             GeoAPI.GeometryServiceProvider.Instance = NetTopologySuite.NtsGeometryServices.Instance;
         }
 
-        public static IFeatureSet LoadFeatureSet(string connectionString, string sql)
+        /// <summary>
+        /// Imports SQLServer spatial data from query into a DotSpatial featureset
+        /// </summary>
+        /// <remarks>
+        /// Code from FObermeier in http://dotspatial.codeplex.com/discussions/250928
+        /// Requires DotSpatial.Data in calling module to return IFeatureSet type
+        /// Usage example:  var fsPolygon = (FeatureSet)SqlServerToDsFeatureSet.LoadFeatureSet(ConnectionString, query);
+        /// </remarks>
+        /// 
+        public static IFeatureSet SqlServerToDsFeatureSet(string connectionString, string sql)
         {
             IFeatureSet res = null;
             using (var cn = new SqlConnection(connectionString))
@@ -143,6 +148,13 @@ namespace DavidHoward.SpatialHelper
             //    throw new InvalidOperationException("No geometry column found");
 
             return res;
+        }
+
+        //========================================================
+
+        public static ArrayList ShapeToNtsArrayList(string shapeFile)
+        {
+            
         }
 
     }

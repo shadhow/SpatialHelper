@@ -84,7 +84,7 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Properties\AssemblyInfo.cs" />
-    <Compile Include="SqlServerToFeatureSet.cs" />
+    <Compile Include="SpatialHelper.cs" />
     <Compile Include="SqlServerTypes\Loader.cs" />
     <Compile Include="Utility\DotSpatialEx.cs" />
     <Compile Include="Utility\GeometryConverterToDotSpatial.cs" />
