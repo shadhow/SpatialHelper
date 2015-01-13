@@ -4,11 +4,16 @@ using System.Collections.Generic;
 
 using System.Data;
 using System.Data.SqlClient;
+using System.Data.SqlTypes;
+using System.Linq;
+
+using Microsoft.SqlServer.Types;
+using Microsoft.SqlServer.Management.Common;
+using Microsoft.SqlServer.Management.Smo;
 
 using DotSpatial.Data;
 using DotSpatial.Topology;
 using GeoAPI.Geometries;
-using Microsoft.SqlServer.Types;
 using NetTopologySuite.IO;
 
 
@@ -19,20 +24,20 @@ namespace DavidHoward.SpatialHelper
     /// </summary>
     public class SpatialHelper
     {
-        //http://dotspatial.codeplex.com/discussions/250928
-
         //========================================================
+        #region SqlServerToDsFeatureSet
         static SpatialHelper()
         {
             GeoAPI.GeometryServiceProvider.Instance = NetTopologySuite.NtsGeometryServices.Instance;
         }
 
         /// <summary>
-        /// Imports SQLServer spatial data from query into a DotSpatial featureset
+        /// Imports SQLServer spatial data from query into a DotSpatial featureset (not returning column names!!)
         /// </summary>
         /// <remarks>
         /// Code from FObermeier in http://dotspatial.codeplex.com/discussions/250928
-        /// Requires DotSpatial.Data in calling module to return IFeatureSet type
+        /// and https://dotspatial.codeplex.com/workitem/25687
+        /// Requires DotSpatial.Data in calling module to accept return IFeatureSet type
         /// Usage example:  var fsPolygon = (FeatureSet)SqlServerToDsFeatureSet.LoadFeatureSet(ConnectionString, query);
         /// </remarks>
         /// 
@@ -150,13 +155,181 @@ namespace DavidHoward.SpatialHelper
             return res;
         }
 
+        #endregion SqlServerToDsFeatureSet
         //========================================================
 
-        public static ArrayList ShapeToNtsArrayList(string shapeFile)
+        /// <summary>
+        /// Shapefile features to data table (to simplify checking contents)
+        /// </summary>
+        /// <remarks>
+        /// Uses DotSpatial Featureset to get shapefile features 
+        /// If srid > 0 then returns SqlGeography type; otherwise SqlGeometry. TODO: use shapefile projection info to get SRID
+        /// Ring direction may need to be reoriented for geography type. TODO: auto-compute if reorientation needed
+        /// </remarks>
+        public static DataTable ShapeToDataTable(string shapeFile, int srid, string spatialColumnName, bool reorientRing, out Exception exception)
         {
-            
+            var dt = new DataTable();
+            exception = null;
+            try
+            {
+                var fs = (FeatureSet)FeatureSet.Open(shapeFile);
+
+                dt = fs.DataTable;                //copy shapefile datatable
+
+                //add spatial column
+                if (srid > 0)
+                    dt.Columns.Add(spatialColumnName, typeof(SqlGeography));
+                else
+                    dt.Columns.Add(spatialColumnName, typeof(SqlGeometry));
+
+                var i = 0;
+                foreach (var f in fs.Features)                //copy shapefile spatial field into datatable
+                {
+                    var geomString = f.BasicGeometry.ToString();
+
+                    if (srid > 0)
+                    {
+                        var myGeog = SqlGeography.STGeomFromText(new SqlChars(geomString), 4283);
+                        if (reorientRing)
+                            myGeog = myGeog.ReorientObject();
+
+                        dt.Rows[i][spatialColumnName] = myGeog;
+                    }
+                    else
+                    {
+                        var myGeom = SqlGeometry.STGeomFromText(new SqlChars(geomString), srid);
+                        dt.Rows[i][spatialColumnName] = myGeom;
+                    }
+                    i++;
+                }
+            }
+            catch (Exception ex)
+            {
+                exception = ex;
+            }
+
+            return dt;
         }
 
+        /// <summary>
+        /// DotSpatial features to data table (to simplify checking contents)
+        /// </summary>
+        public static DataTable DsFeatureSetToDataTable(FeatureSet fs)
+        {
+            var dt = new DataTable();
+
+            var numCols = fs.Features[0].DataRow.ItemArray.Count();
+
+            for (var i = 0; i < numCols; i++)
+            {
+                dt.Columns.Add();
+            }
+
+            foreach (var f in fs.Features)
+            {
+                dt.Rows.Add(f.DataRow.ItemArray);
+            }
+
+            return dt;
+        }
+
+        /// <summary>
+        /// Copy data from DataTable to SQL Server Database using SQLServer Management Objects
+        /// isNewTable = true: will (drop and) create new SQL Server table
+        /// </summary>
+        ///         
+        /// <remarks>
+        /// Code largely from:
+        ///   www.codeproject.com/Articles/17169/Copy-Data-from-a-DataTable-to-a-SQLServer-Database
+        ///   http://technico.qnownow.com/table-operations-using-smo/
+        /// See readme.txt  for references required
+        /// </remarks>
+        public static void DataTableToSqlTable(DataTable dataTable, string connectionString, string databaseName,  string sqlTablename, bool isNewTable, out Exception exception)
+        {
+            exception = null;
+            try
+            {
+                var connection = new SqlConnection(connectionString);
+                var server = new Server(new ServerConnection(connection));
+                var db = server.Databases[databaseName];            //set target db
+                var sqlTable = new Table(db, sqlTablename);
+
+                //SMO Column object referring to destination table.
+                var tempC = new Column();
+
+                //Add the column names and types from the datatable into the new table
+                //Using the columns name and type property
+                foreach (DataColumn dc in dataTable.Columns)                    //Create columns from datatable column schema
+                {
+                    tempC = new Column(sqlTable, dc.ColumnName);
+                    tempC.DataType = GetDataType(dc.DataType.ToString());
+
+                    sqlTable.Columns.Add(tempC);
+                }
+
+                var table = db.Tables[sqlTablename];                //try getting table reference from database               
+                var tableExists = (table != null);
+
+                if (tableExists && isNewTable)        //table exists and new table wanted... drop and recreate
+                {
+                    table.Drop();
+                    sqlTable.Create();
+                }
+                else if (!tableExists && !isNewTable)  //doesn't exist and no new table specified, so create it anyway
+                {
+                    sqlTable.Create();
+                }
+                // else table exists already and new table not required (i.e. copy data to existing table)
+
+                using (var bulkCopy = new SqlBulkCopy(connectionString))
+                {
+                    bulkCopy.DestinationTableName = sqlTable.Name;
+                    bulkCopy.WriteToServer(dataTable);
+                }
+                connection.Close();
+            }
+            catch (Exception ex)
+            {
+                exception = ex;
+            }
+        }
+
+        private static DataType GetDataType(string dataType)
+        {
+            DataType DTTemp = null;
+
+            switch (dataType)
+            {
+                case ("System.Single"):
+                    DTTemp = DataType.Float;
+                    break;
+
+                case ("System.Decimal"):
+                    DTTemp = DataType.Decimal(2, 18);
+                    break;
+                case ("System.String"):
+                    DTTemp = DataType.VarChar(50);
+                    break;
+                case ("System.DateTime"):
+                    DTTemp = DataType.DateTime;
+                    break;
+                case ("System.Int32"):
+                    DTTemp = DataType.Int;
+                    break;
+
+                case ("Microsoft.SqlServer.Types.SqlGeography"):
+                    DTTemp = DataType.Geography;
+                    break;
+                case ("Microsoft.SqlServer.Types.SqlGeometry"):
+                    DTTemp = DataType.Geometry;
+                    break;
+
+            }
+            return DTTemp;
+        }
+
+    
+    
     }
 
 }
