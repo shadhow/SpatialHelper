@@ -14,7 +14,10 @@ using Microsoft.SqlServer.Management.Smo;
 using DotSpatial.Data;
 using DotSpatial.Topology;
 using GeoAPI.Geometries;
+
 using NetTopologySuite.IO;
+using NetTopologySuite.Geometries;
+
 
 
 namespace DavidHoward.SpatialHelper
@@ -328,8 +331,35 @@ namespace DavidHoward.SpatialHelper
             return DTTemp;
         }
 
-    
-    
+        /// <summary>
+        /// Gets basic shapefile header info into a hashtable
+        /// </summary>
+        /// <remarks>
+        /// code based on  //http://dominoc925.blogspot.com.au/2013/04/using-nettopologysuite-to-read-and.html
+        /// using NetTopologySuite.IO;
+        /// </remarks>
+        /// <param name="shapefile">path to shapefile</param>
+        /// <returns>hshtable with header key/pair values</returns>
+        public static Hashtable GetShapefileHeaderInfo(string shapefile)
+        {
+            var hashTable = new Hashtable();
+
+            var factory = new NetTopologySuite.Geometries.GeometryFactory();
+            var shapeFileDataReader = new ShapefileDataReader(shapefile, factory);
+            var shpHeader = shapeFileDataReader.ShapeHeader;
+            var dbHeader = shapeFileDataReader.DbaseHeader;
+
+            hashTable.Add("Bounds", shpHeader.Bounds);
+            hashTable.Add("ShapeType", shpHeader.ShapeType);
+            hashTable.Add("FileLength", shpHeader.FileLength);
+
+            hashTable.Add("NumFields", dbHeader.NumFields);
+            hashTable.Add("NumRecords", dbHeader.NumRecords);
+            hashTable.Add("LastUpdate", dbHeader.LastUpdateDate);
+
+            return hashTable;
+        }
+
     }
 
 }
